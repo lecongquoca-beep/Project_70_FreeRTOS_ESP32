@@ -1,66 +1,73 @@
-# Project cá nhân (70%) – FreeRTOS trên ESP32-S3
+# Project Cá Nhân (70%) – Hệ Thống Nhúng Đa Nhiệm Thời Gian Thực FreeRTOS trên ESP32
 
-Sinh viên: **Lê Ngọc Hoàn** – MSSV **24119038** · GVHD: Huỳnh Hoàng Hà
+- **Sinh viên thực hiện:** Lê Công Quốc Anh — **MSSV:** `24119009`
+- **Môn học:** Real-Time Operating Systems (Hệ điều hành thời gian thực)
+- **Giảng viên hướng dẫn:** ThS. Huỳnh Hoàng Hà
+- **Đơn vị:** Khoa Điện – Điện tử, Trường Đại học Sư phạm Kỹ thuật TP.HCM (HCMUTE)
+- **Báo cáo chi tiết:** [`Report_RTOS_ESP32_Project70_v7.docx`](./Report_RTOS_ESP32_Project70_v7.docx)
 
-8 task + 1 software timer trên ESP32-S3: LED, nút nhấn, cảm biến, OLED, đồng bộ bằng semaphore, mutex, queue, event group, task notification.
+---
 
-**Video chạy thử:** [`../media/demo_esp32s3.mp4`](../media/demo_esp32s3.mp4) (57 s, 13/11/2026) · **Báo cáo:** [`../03_Reports/Report_Project_CaNhan_FreeRTOS_v2.docx`](../03_Reports/Report_Project_CaNhan_FreeRTOS_v2.docx)
+## 1. Tổng quan dự án
 
-![Mạch thật](docs/figures/f6_video_plate.jpg)
+Dự án thiết kế và triển khai một nút điều khiển và giám sát thời gian thực đa nhiệm trên vi điều khiển lõi kép **ESP32-WROOM-32** sử dụng nhân **SMP FreeRTOS**. Hệ thống gồm **8 Task** và **1 Software Timer** được phân tải bất đối xứng trên hai nhân CPU (`Core 0` và `Core 1`), minh họa **12 cơ chế cốt lõi của RTOS** (`[K1]`–`[K12]`) nhằm loại bỏ hiện tượng trôi pha thời gian (timing drift), xung đột bus I²C dùng chung và chồng chéo dữ liệu UART.
 
-| Kết quả đo (log Serial) | |
+### Kết quả thực nghiệm trên phần cứng thật (> 1,111 giây chạy liên tục)
+| Hạng mục kiểm thử | Kết quả đo thực tế (Serial Monitor & OLED) |
 |---|---|
-| LED3 sáng sau mỗi lần nhấn BTN2 | 3 000 ms, 7/7 lần |
-| Che tay / rọi đèn lên quang trở | 57 % → 16 % (~3 lux) / 100 % (~1 600 lux) |
-| BTN2 bấm liên tiếp khi LED3 sáng | lần sau báo `da co san`, LED3 nối thêm đúng 1 lượt |
-| Chu kỳ heartbeat | 5 000 ms |
-| Log bị rơi sau hơn 10 phút | 0 |
-| RAM / Flash | 7.1 % / 11.5 % |
+| **Chu kỳ nháy LED1 (Task 1)** | 600 ms (đảo trạng thái mỗi 300 ms qua `vTaskDelayUntil`), độ lệch pha tích lũy **0 ms** |
+| **Cảm biến ánh sáng BH1750 (Task 2)** | Bình thường trong phòng: **97.5 – 113.3 lx** (`66% – 68%`); che tay: giảm mượt xuống **50.8 lx** (`56%`) |
+| **Phản hồi nút nhấn BTN1 (Task 3)** | Lọc chống dội 30 ms (`INPUT_PULLUP`), đảo trạng thái LED2 tức thì, **0 lỗi nhiễu tiếp điểm** |
+| **Đồng bộ Binary Semaphore BTN2 → LED3** | Độ trễ chiếm quyền (preemption) `< 1 ms`; LED3 sáng chuẩn xác **3,000 ms**; bấm dồn báo `da co san` (bão hòa mức 1) |
+| **Màn hình OLED SH1106 1.3" (Task 6)** | Làm tươi 500 ms/lần, đồng bộ khởi động bằng `Event Group`, chia sẻ bus I²C với BH1750 qua `Mutex` không treo bus |
+| **Gatekeeper Queue & Heartbeat (Task 7)** | Hàng đợi 16 phần tử (`g_logQueue`), chu kỳ heartbeat **5,000 ms**, số gói tin bị rơi **`drop = 0`** |
+| **Tài nguyên bộ nhớ (Task 8 Monitor)** | Flash: **304,032 B** · SRAM Heap trống: **318,512 B** · Stack trống tối thiểu mỗi task: **≥ 1,252 B** (mức dùng `< 60%`) |
 
-![Kiến trúc phần mềm](docs/figures/f2_software.png)
-![Dòng thời gian từ log](docs/figures/f4_timeline.png)
+---
 
-## Phần cứng (mặc định ESP32-S3 DevKitC-1)
-| Linh kiện | ESP32-S3 | ESP32 thường | Ghi chú |
+## 2. Sơ đồ kết nối phần cứng (ESP32-WROOM-32 DevKitC 38 chân)
+
+Mạch sử dụng bo mạch mở rộng Domino (Screw-Terminal Shield) kết nối với ngoại vi qua bus I²C 100 kHz và các chân GPIO:
+
+| Linh kiện | Chân ESP32 (`config.h`) | Chế độ / Giao tiếp | Chức năng trong hệ thống |
 |---|---|---|---|
-| LED1 (+220 Ω) | GPIO4 | GPIO25 | Task 1, nháy T = 200 ms |
-| LED2 (+220 Ω) | GPIO5 | GPIO26 | Task 3, BTN1 đảo trạng thái |
-| LED3 (+220 Ω) | GPIO6 | GPIO27 | Task 5, sáng 3 s khi nhận semaphore |
-| BTN1 → GND | GPIO15 | GPIO32 | INPUT_PULLUP |
-| BTN2 → GND | GPIO16 | GPIO33 | INPUT_PULLUP, cấp binary semaphore |
-| Nút BOOT (có sẵn) | GPIO0 | GPIO0 | ngắt → Task 8 in thông tin stack/heap |
-| Quang trở + điện trở 2,2 kΩ (cầu chia: 3V3–2,2k–GPIO1–quang trở–GND) | GPIO1 | GPIO34 | ADC1, Task 2 |
-| OLED SSD1306 I2C 0x3C | SDA 10, SCL 11 | SDA 21, SCL 22 | Task 6, 100 kHz, tự dò cặp chân nếu không thấy |
+| **LED1** (+ điện trở 220 Ω – 1 kΩ) | `GPIO25` | Digital Output | Nháy định kỳ chu kỳ `600 ms` (Task 1) |
+| **LED2** (+ điện trở 220 Ω – 1 kΩ) | `GPIO26` | Digital Output | Đảo trạng thái ON/OFF mỗi lần nhấn BTN1 (Task 3) |
+| **LED3** (+ điện trở 220 Ω – 1 kΩ) | `GPIO27` | Digital Output | Sáng đúng `3,000 ms` khi nhận Binary Semaphore từ BTN2 (Task 5) |
+| **Nút nhấn BTN1** (xanh) | `GPIO18` | `INPUT_PULLUP` (nối GND) | Điều khiển bật/tắt LED2, chống dội phần mềm `30 ms` (Task 3) |
+| **Nút nhấn BTN2** (trắng) | `GPIO19` | `INPUT_PULLUP` (nối GND) | Cấp token vào `g_btn2Sem` đánh thức Task 5 (Task 4) |
+| **Nút BOOT** (có sẵn trên kit) | `GPIO0` | `INPUT_PULLUP` + Ngắt ngoài (`FALLING`) | Kích hoạt ISR đánh thức Task 8 in thống kê Heap & Stack HWM |
+| **Cảm biến ánh sáng BH1750** | `SDA = GPIO21`, `SCL = GPIO22` | I²C (`0x23`, chân `ADO` nối `GND`) | Đo độ rọi (lux) và quy đổi logarit ra `%` mỗi `500 ms` (Task 2) |
+| **Màn hình OLED SH1106 1.3"** | `SDA = GPIO21`, `SCL = GPIO22` | I²C (`0x3C`, `128x64`) | Hiển thị trạng thái LED1/2/3, lux, `%`, đếm ngược 3.0s và `seq` (Task 6) |
 
-## Chạy
-1. VS Code (đã cài extension PlatformIO + Wokwi), mở thư mục này. Thanh trạng thái dưới cùng: chọn env `esp32s3`.
-2. Bấm ✓ (Build) → → (Upload) → 🔌 (Serial Monitor, 115200).
-3. Kit đang cắm cổng **USB gốc** (COM4) nên `ARDUINO_USB_CDC_ON_BOOT=1`, cổng ghi cố định `upload_port/monitor_port = COM4` (máy có nhiều cổng COM ảo). Cắm cổng **UART** (CH343) thì đổi về 0 và sửa số cổng. Chip reset thì phải mở lại Serial Monitor.
-4. Upload không vào được: giữ nút BOOT, nhấn RST, thả BOOT rồi Upload lại.
-5. Không có phần cứng: F1 → *Wokwi: Start Simulator* (sơ đồ S3 trong `diagram.json`, sơ đồ ESP32 thường trong `docs/diagram_esp32dev.json`).
-6. File nạp sẵn: `prebuilt_esp32s3/firmware.factory.bin` (nạp ở địa chỉ 0x0 bằng ESP Web Flasher / esptool nếu không muốn build).
+*(Ghi chú: Các chân mở rộng `PIN_TEMP = GPIO35` và `PIN_RGB = GPIO16/17/5` đã được khai báo sẵn trong `include/config.h` cho giai đoạn phát triển tiếp theo).*
 
-### Ghi chú khi build trên Windows (đã gặp và đã xử lý)
-- Đường dẫn có dấu ("TÀI LIỆU HỌC TẬP") làm ld báo `Invalid argument` → `platformio.ini` đặt `build_dir` ra `C:\Users\<tên>\.pio_build\rtos_personal`; `copy_fw.py` chép firmware về `.pio/wokwi/` cho Wokwi.
-- PlatformIO Core 6.2.0-post.1 không nhận platform pioarduino 55.03.312 → dùng 55.03.30 (Arduino-ESP32 3.3.0).
-- OLED ban đầu ở SDA=GPIO8 không chạy: GPIO8 trên kit bị kéo xuống GND (quét I2C thấy cả 126 địa chỉ trả lời) → chuyển sang GPIO10/11. `oled_init()` tự dò nhiều cặp chân, bỏ qua chân đang bị kéo về GND; mất OLED thì Task 6 in trạng thái ra Serial và tự khởi tạo lại.
+---
 
-**Đã build + nạp + chạy thật** trên ESP32-S3 (QFN56 rev v0.2, PSRAM 8 MB, flash 16 MB) ngày 11/11/2026: RAM 7.1%, Flash 11.5%. Ảnh minh chứng trong `docs/screenshots/`.
+## 3. Kiến trúc phần mềm & Phân bổ Task trên 2 nhân
 
-## Danh sách task
-| Task | Tên | Core | Prio | Chu kỳ / sự kiện | Kỹ thuật |
-|---|---|---|---|---|---|
-| 1 | led1 | 1 | 1 | 100 ms đảo (T = 200 ms) | vTaskDelayUntil |
-| 2 | sensor | 0 | 2 | 500 ms | mutex, event group |
-| 3 | btn1 | 1 | 3 | quét 10 ms | chống dội, vTaskDelay |
-| 4 | btn2 | 1 | 3 | quét 10 ms | xSemaphoreGive |
-| 5 | led3 | 1 | 4 | chờ semaphore | xSemaphoreTake(portMAX_DELAY), critical section |
-| 6 | oled | 0 | 1 | 500 ms | mutex, event group wait, đếm ngược LED3 |
-| 7 | logger | 0 | 1 | chờ queue | queue, gatekeeper task cho Serial |
-| 8 | monitor | 0 | 2 | ngắt nút BOOT | ISR → task notification, stack high-water mark |
-| – | heartbeat | timer daemon | – | 5 s | software timer auto-reload |
+| Task | Tên hàm | Nhân CPU | Priority | Stack | Chu kỳ / Sự kiện | Cơ chế FreeRTOS áp dụng |
+|---|---|---|---|---|---|---|
+| **Task 1** | `task1_led1` | Core 1 | 1 | 2,048 B | Chu kỳ `600 ms` (đảo mỗi `300 ms`) | `vTaskDelayUntil()` (`[K2]`) |
+| **Task 2** | `task2_sensor` | Core 0 | 2 | 3,072 B | Chu kỳ `500 ms` | `g_i2cMutex`, `g_sensorMutex` (`[K5]`), `xEventGroupSetBits` (`[K7]`), tự khởi tạo lại khi cắm nóng |
+| **Task 3** | `task3_btn1` | Core 1 | 3 | 3,072 B | Quét mỗi `10 ms` | Chống dội phím `30 ms`, `vTaskDelay()` (`[K3]`) |
+| **Task 4** | `task4_btn2` | Core 1 | 3 | 3,072 B | Quét mỗi `10 ms` | `xSemaphoreGive(g_btn2Sem)` (`[K4]`), `portENTER_CRITICAL` (`[K9]`) |
+| **Task 5** | `task5_led3` | Core 1 | **4** | 3,072 B | Chờ sự kiện (`portMAX_DELAY`) | `xSemaphoreTake(g_btn2Sem)` (`[K4]`), ưu tiên cao nhất phản hồi `< 1 ms` |
+| **Task 6** | `task6_oled` | Core 0 | 1 | 4,096 B | Chu kỳ `500 ms` | `xEventGroupWaitBits` (`[K7]`), `g_i2cMutex`, `g_sensorMutex` (`[K5]`) |
+| **Task 7** | `task7_logger` | Core 0 | 1 | 3,072 B | Chờ hàng đợi (`portMAX_DELAY`) | Mẫu thiết kế **Gatekeeper** độc quyền xuất UART qua `g_logQueue` (`[K6]`) |
+| **Task 8** | `task8_monitor` | Core 0 | 2 | 4,096 B | Chờ thông báo từ `isr_boot()` | **Deferred ISR** (`vTaskNotifyGiveFromISR`, `[K8]`), `uxTaskGetStackHighWaterMark()` (`[K11]`) |
+| **Timer** | `heartbeat_cb` | Timer Svc | – | – | Auto-reload `5,000 ms` | `xTimerCreate()` (`[K10]`) báo `uptime`, `btn2Count`, `drop` |
+| **Setup** | `loop()` | – | – | – | Chạy 1 lần lúc khởi động | `vTaskDelete(NULL)` (`[K12]`) giải phóng ~8 KB SRAM của `loopTask` |
 
-Báo cáo đầy đủ: `../03_Reports/Report_Project_CaNhan_FreeRTOS_v2.docx`.
+---
 
-## Lỗi còn mở
-Bộ đếm toàn cục `g_btn2Count` và `g_sensor.seq` đôi khi bị đặt lại về giá trị nhỏ dù chip không reset (thấy ở ~765 s và trong video). Nghi ghi tràn bộ nhớ quanh 0x3fc98960; hướng tìm: watchpoint phần cứng trên địa chỉ biến. Buổi chạy 13/11 (hơn 430 s) không gặp lại. Xem mục 6.3 của báo cáo.
+## 4. Cấu trúc thư mục dự án
+
+```text
+├── include/
+│   └── config.h                # Định nghĩa chân GPIO, địa chỉ I2C, chu kỳ, Priority và Stack
+├── src/
+│   └── main.cpp                # Mã nguồn chính triển khai 8 Task, ISR, Software Timer & IPC
+├── platformio.ini              # Cấu hình build PlatformIO (espressif32 @ 6.9.0) & thư viện
+├── Report_RTOS_ESP32_Project70_v7.docx  # Báo cáo tiểu luận hoàn chỉnh
+└── README.md                   # Tài liệu hướng dẫn dự án
