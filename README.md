@@ -6,7 +6,7 @@
 - **Giảng viên hướng dẫn:** ThS. Huỳnh Hoàng Hà
 - **Đơn vị:** Khoa Điện – Điện tử, Trường Đại học Sư phạm Kỹ thuật TP.HCM (HCMUTE)
 - **Báo cáo chi tiết:** [`Report_RTOS_ESP32_Project70_v10.pdf`](./Report_RTOS_ESP32_Project70_v10.pdf)
-- **Video chạy thực tế trên phần cứng:** [YouTube Demo – 10-Task FreeRTOS on ESP32-WROOM-32](https://youtu.be/JD219vr1ZA4)
+- **Video chạy thực tế trên phần cứng:** [https://www.youtube.com/watch?v=JD2I9vr1ZA4]
 
 ---
 
