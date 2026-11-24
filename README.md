@@ -5,7 +5,7 @@
 - **Học kỳ:** Học kỳ 1 — Năm học 2026–2027
 - **Giảng viên hướng dẫn:** ThS. Huỳnh Hoàng Hà
 - **Đơn vị:** Khoa Điện – Điện tử, Trường Đại học Sư phạm Kỹ thuật TP.HCM (HCMUTE)
-- **Báo cáo chi tiết:** [`Report_RTOS_ESP32_Project70_v10.pdf`](./Report_RTOS_ESP32_Project70_v10.pdf)
+- **Báo cáo chi tiết:** [`Report_RTOS_ESP32_Project70.pdf`](./Report_RTOS_ESP32_Project70.pdf)
 - **Video chạy thực tế trên phần cứng:** [https://www.youtube.com/watch?v=JD2I9vr1ZA4]
 
 ---
